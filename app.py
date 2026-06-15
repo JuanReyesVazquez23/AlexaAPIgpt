@@ -42,7 +42,7 @@ def alexa_webhook():
     if request_type == "LaunchRequest":
         sessions[session_id] = []   # nueva sesión limpia
         return _alexa_response(
-            speech="Hola, soy tu asistente con Chat GPT. ¿En qué te puedo ayudar?",
+            speech="Hola, soy Chat GPT. ¿En qué te puedo ayudar?",
             reprompt="Puedes preguntarme lo que quieras.",
             should_end=False
         )
