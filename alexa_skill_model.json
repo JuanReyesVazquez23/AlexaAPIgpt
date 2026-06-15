@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "mi asistente",
+      "invocationName": "abre chat gpt",
       "intents": [
         {
           "name": "PreguntarIntent",
