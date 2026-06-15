@@ -13,13 +13,12 @@ sessions: dict[str, list] = {}
 
 SYSTEM_PROMPT = """Eres un asistente inteligente en un Amazon Echo Dot.
 Responde SIEMPRE en español.
-Máximo 1 oración corta. Sin listas. Sin bullets. Solo texto hablado natural.
+Máximo 2 oraciones cortas. Sin listas. Solo texto hablado natural.
 Si no sabes algo reciente, dilo en una frase."""
 
 @app.route("/", methods=["GET"])
 def health():
-    # Este endpoint también sirve para keep-alive
-    return "OK", 200
+    return jsonify({"status": "online", "service": "Alexa-GPT Bridge"})
 
 @app.route("/ping", methods=["GET"])
 def ping():
@@ -27,9 +26,9 @@ def ping():
 
 @app.route("/alexa", methods=["POST"])
 def alexa_webhook():
-    body = request.get_json(silent=True)
+    body = request.get_json(silent=True, force=True)
     if not body:
-        return _alexa_error("Sin datos.")
+        return jsonify(_build_response("No recibí datos.", should_end=True))
 
     request_type = body.get("request", {}).get("type", "")
     session_id   = body.get("session", {}).get("sessionId", "default")
@@ -38,11 +37,11 @@ def alexa_webhook():
 
     if request_type == "LaunchRequest":
         sessions[session_id] = []
-        return _alexa_response(
+        return jsonify(_build_response(
             speech="¿En qué te puedo ayudar?",
             reprompt="Pregúntame lo que quieras.",
             should_end=False
-        )
+        ))
 
     elif request_type == "IntentRequest":
         intent_name = body["request"]["intent"]["name"]
@@ -52,43 +51,44 @@ def alexa_webhook():
             user_query = slots.get("pregunta", {}).get("value", "")
 
             if not user_query:
-                return _alexa_response(
+                return jsonify(_build_response(
                     speech="No entendí. ¿Puedes repetir?",
                     reprompt="¿Qué quieres saber?",
                     should_end=False
-                )
+                ))
 
             logger.info(f"Query: {user_query}")
             gpt_reply = _ask_gpt(session_id, user_query)
-            return _alexa_response(
+            logger.info(f"Reply: {gpt_reply}")
+            return jsonify(_build_response(
                 speech=gpt_reply,
                 reprompt="¿Algo más?",
                 should_end=False
-            )
+            ))
 
         elif intent_name in ("AMAZON.CancelIntent", "AMAZON.StopIntent"):
             sessions.pop(session_id, None)
-            return _alexa_response(speech="¡Hasta luego!", should_end=True)
+            return jsonify(_build_response("¡Hasta luego!", should_end=True))
 
         elif intent_name == "AMAZON.HelpIntent":
-            return _alexa_response(
-                speech="Pregúntame lo que quieras, por ejemplo: quién es Einstein.",
+            return jsonify(_build_response(
+                speech="Pregúntame lo que quieras.",
                 reprompt="¿Qué quieres saber?",
                 should_end=False
-            )
+            ))
 
         else:
-            return _alexa_response(
+            return jsonify(_build_response(
                 speech="No entendí. Intenta de nuevo.",
                 reprompt="¿Qué quieres saber?",
                 should_end=False
-            )
+            ))
 
     elif request_type == "SessionEndedRequest":
         sessions.pop(session_id, None)
-        return "", 200
+        return jsonify({})
 
-    return _alexa_error("Solicitud no reconocida.")
+    return jsonify(_build_response("Solicitud no reconocida.", should_end=True))
 
 
 def _ask_gpt(session_id: str, user_message: str) -> str:
@@ -96,48 +96,50 @@ def _ask_gpt(session_id: str, user_message: str) -> str:
         sessions[session_id] = []
 
     sessions[session_id].append({"role": "user", "content": user_message})
-    history = sessions[session_id][-4:]  # solo últimas 4 = más rápido
+    history = sessions[session_id][-4:]
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",   # el más rápido disponible
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 *history
             ],
-            max_tokens=80,           # respuesta muy corta = más rápido
+            max_tokens=100,
             temperature=0.5
         )
         reply = response.choices[0].message.content.strip()
         sessions[session_id].append({"role": "assistant", "content": reply})
-        logger.info(f"Reply: {reply}")
         return reply
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error OpenAI: {e}")
         return "Hubo un error. Intenta de nuevo."
 
 
-def _alexa_response(speech: str, reprompt: str = None, should_end: bool = True):
+def _build_response(speech: str, reprompt: str = None, should_end: bool = True) -> dict:
     response = {
         "version": "1.0",
         "response": {
-            "outputSpeech": {"type": "PlainText", "text": speech},
+            "outputSpeech": {
+                "type": "PlainText",
+                "text": speech
+            },
             "shouldEndSession": should_end
         }
     }
     if reprompt and not should_end:
         response["response"]["reprompt"] = {
-            "outputSpeech": {"type": "PlainText", "text": reprompt}
+            "outputSpeech": {
+                "type": "PlainText",
+                "text": reprompt
+            }
         }
-    return response, 200, {"Content-Type": "application/json"}
-
-
-def _alexa_error(msg: str):
-    return _alexa_response(f"Error: {msg}", should_end=True)
+    return response
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
 
