@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 from flask import Flask, request, jsonify
 from openai import OpenAI
@@ -15,8 +14,8 @@ sessions: dict[str, list] = {}
 
 SYSTEM_PROMPT = """Eres un asistente inteligente conectado a un Amazon Echo Dot.
 Responde siempre en español, de forma clara y concisa.
-Tus respuestas deben ser cortas (máximo 3 oraciones) para que Alexa las lea cómodamente.
-Si te preguntan sobre eventos actuales, noticias, partidos o clima, busca en internet.
+Tus respuestas deben ser cortas (máximo 2 oraciones) para que Alexa las lea rápido.
+Si te preguntan sobre eventos muy recientes que no conoces, dilo claramente.
 Sé amigable y directo."""
 
 # ── Health check ───────────────────────────────────────────────────────────────
@@ -24,7 +23,7 @@ Sé amigable y directo."""
 def health():
     return jsonify({"status": "online", "service": "Alexa-GPT Bridge"})
 
-# ── Endpoint principal que Alexa llama ────────────────────────────────────────
+# ── Endpoint principal ─────────────────────────────────────────────────────────
 @app.route("/alexa", methods=["POST"])
 def alexa_webhook():
     body = request.get_json(silent=True)
@@ -69,13 +68,13 @@ def alexa_webhook():
         elif intent_name in ("AMAZON.CancelIntent", "AMAZON.StopIntent"):
             sessions.pop(session_id, None)
             return _alexa_response(
-                speech="¡Hasta luego! Fue un placer ayudarte.",
+                speech="¡Hasta luego!",
                 should_end=True
             )
 
         elif intent_name == "AMAZON.HelpIntent":
             return _alexa_response(
-                speech="Puedes preguntarme cualquier cosa, incluso noticias o partidos de hoy. Di por ejemplo: dime qué partidos hay hoy.",
+                speech="Puedes preguntarme cualquier cosa. Di por ejemplo: dime qué es la inteligencia artificial.",
                 reprompt="¿Qué quieres saber?",
                 should_end=False
             )
@@ -94,47 +93,32 @@ def alexa_webhook():
     return _alexa_error("Tipo de solicitud no reconocido.")
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── GPT sin web search para respuesta rápida ──────────────────────────────────
 def _ask_gpt(session_id: str, user_message: str) -> str:
     if session_id not in sessions:
         sessions[session_id] = []
 
     sessions[session_id].append({"role": "user", "content": user_message})
-    history = sessions[session_id][-10:]
+    history = sessions[session_id][-6:]  # menos historial = más rápido
 
     try:
-        # Intentar con web search (gpt-4o con búsqueda en tiempo real)
-        response = client.responses.create(
-            model="gpt-4o",
-            tools=[{"type": "web_search_preview"}],
-            input=[
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 *history
-            ]
+            ],
+            max_tokens=150,   # respuestas cortas = más rápido
+            temperature=0.7
         )
-        reply = response.output_text.strip()
+        reply = response.choices[0].message.content.strip()
+        sessions[session_id].append({"role": "assistant", "content": reply})
+        logger.info(f"GPT reply: {reply}")
+        return reply
 
     except Exception as e:
-        logger.warning(f"Web search falló, usando chat normal: {e}")
-        try:
-            # Fallback: gpt-4o sin web search
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    *history
-                ],
-                max_tokens=300,
-                temperature=0.7
-            )
-            reply = response.choices[0].message.content.strip()
-        except Exception as e2:
-            logger.error(f"Error OpenAI: {e2}")
-            return "Lo siento, hubo un problema al consultar a Chat GPT. Por favor intenta de nuevo."
-
-    sessions[session_id].append({"role": "assistant", "content": reply})
-    logger.info(f"GPT reply: {reply}")
-    return reply
+        logger.error(f"Error OpenAI: {e}")
+        return "Lo siento, hubo un problema. Por favor intenta de nuevo."
 
 
 def _alexa_response(speech: str, reprompt: str = None, should_end: bool = True):
