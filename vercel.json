@@ -1,14 +1,15 @@
 {
   "version": 2,
-  "functions": {
-    "api/alexa.py": {
-      "runtime": "@vercel/python"
+  "builds": [
+    {
+      "src": "api/alexa.py",
+      "use": "@vercel/python"
     }
-  },
+  ],
   "routes": [
     {
-      "src": "/api/alexa.py",
-      "dest": "/api/alexa.py"
+      "src": "/(.*)",
+      "dest": "api/alexa.py"
     }
   ]
-}
+} 
