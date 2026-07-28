@@ -26,7 +26,7 @@ def health():
     return jsonify({"status": "online", "service": "Alexa-GPT Bridge"})
 
 # ── Endpoint principal que Alexa llama ────────────────────────────────────────
-@app.route("/alexa", methods=["POST"])
+@app.route("/", methods=["POST"])
 def alexa_webhook():
     body = request.get_json(silent=True)
 
