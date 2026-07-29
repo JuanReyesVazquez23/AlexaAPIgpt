@@ -1,6 +1,6 @@
 # Alexa + ChatGPT Bridge
 
-Conecta tu Amazon Echo Dot con ChatGPT usando Flask y Railway.
+Conecta tu Amazon Echo Dot con ChatGPT usando Flask, desplegado como función serverless en Vercel.
 
 ---
 
@@ -8,33 +8,38 @@ Conecta tu Amazon Echo Dot con ChatGPT usando Flask y Railway.
 
 ```
 alexa-gpt/
-├── app.py                  # Servidor Flask principal
+├── api/
+│   └── alexa.py             # Servidor Flask (función serverless)
 ├── requirements.txt
-├── Procfile                # Para Railway/Heroku
-├── .env.example            # Variables de entorno de ejemplo
-├── alexa_skill_model.json  # Modelo del Skill para Alexa Console
+├── vercel.json               # Enruta todas las rutas hacia api/alexa.py
+├── .env.example               # Variables de entorno de ejemplo (uso local)
+├── alexa_skill_model.json    # Modelo del Skill para Alexa Console
 └── README.md
 ```
 
 ---
 
-## Paso 1 — Subir a Railway
+## Paso 1 — Desplegar en Vercel
 
-1. Sube el proyecto a un repo en GitHub
-2. En [railway.app](https://railway.app) → New Project → Deploy from GitHub
-3. En **Variables** agrega:
+1. Sube el proyecto a un repo en GitHub.
+2. En [vercel.com](https://vercel.com) → **Add New Project** → importa el repo.
+3. En **Settings → Environment Variables** agrega (aplica a Production, Preview y Development):
    ```
    OPENAI_API_KEY = sk-proj-tu-clave-aqui
    ```
-4. Railway te dará una URL pública tipo:
+   > Importante: esto **no** se lee del archivo `.env` en producción. Vercel solo usa
+   > las variables configuradas en el dashboard del proyecto.
+4. Despliega. Vercel te dará una URL pública tipo:
    ```
-   https://alexa-gpt-production.up.railway.app
+   https://tu-proyecto.vercel.app
    ```
-5. Prueba que funciona:
+5. Prueba que funciona abriendo esa URL en el navegador:
    ```
-   GET https://tu-url.railway.app/
+   GET https://tu-proyecto.vercel.app/
    → {"status": "online", "service": "Alexa-GPT Bridge"}
    ```
+   Si ves ese JSON, el despliegue está bien. Si ves "Not Found", revisa que
+   `vercel.json` se haya subido y que la variable de entorno esté configurada.
 
 ---
 
@@ -66,11 +71,13 @@ alexa-gpt/
 
 1. En el menú izquierdo → **Endpoint**
 2. Selecciona **HTTPS**
-3. En **Default Region** pega tu URL de Railway + `/alexa`:
+3. En **Default Region** pega directamente la URL de Vercel (sin `/alexa` al final,
+   ya que `vercel.json` enruta cualquier ruta hacia la función):
    ```
-   https://tu-url.railway.app/alexa
+   https://tu-proyecto.vercel.app/
    ```
-4. En el dropdown de SSL → **My development endpoint is a sub-domain of a domain that has a wildcard certificate from a certificate authority**
+4. En el dropdown de SSL → **My development endpoint is a sub-domain of a domain
+   that has a wildcard certificate from a certificate authority**
 5. Click **Save Endpoints**
 
 ---
@@ -80,13 +87,18 @@ alexa-gpt/
 ### En el simulador de Alexa:
 1. Ve a **Test** → activa **Development**
 2. Escribe o di: `abre mi asistente`
-3. Luego pregunta lo que quieras
+3. Luego pregunta lo que quieras, por ejemplo: `pregunta cuál es la capital de Francia`
 
 ### En tu Echo Dot real:
 1. Di: *"Alexa, abre mi asistente"*
 2. Alexa responde: *"Hola, soy tu asistente con Chat GPT..."*
-3. Pregunta: *"¿Cuál es la distancia de la Tierra al Sol?"*
+3. Pregunta: *"Pregunta cuál es la distancia de la Tierra al Sol"*
 4. Alexa habla la respuesta de GPT ✅
+
+> Nota: por cómo funciona el slot `AMAZON.SearchQuery` de Alexa, la pregunta
+> siempre debe ir acompañada de una palabra guía (`pregunta`, `dime`, `qué es`,
+> `cómo funciona`, `cuéntame`, `explícame`, `ayúdame con`, `quiero saber`). Decir
+> la pregunta sola, sin ninguna de esas palabras, no es válido para este tipo de slot.
 
 ---
 
@@ -96,23 +108,46 @@ alexa-gpt/
 Tú: "Alexa, abre mi asistente"
 Alexa: "Hola, soy tu asistente con Chat GPT. ¿En qué te puedo ayudar?"
 
-Tú: "¿Qué es la inteligencia artificial?"
+Tú: "Qué es la inteligencia artificial"
 Alexa: [respuesta de GPT en voz]
 
-Tú: "Dame un ejemplo"
-Alexa: [GPT recuerda el contexto y responde]
+Tú: "Dime otro ejemplo"
+Alexa: [GPT responde a la nueva pregunta]
 
 Tú: "Alexa, para"
 Alexa: "¡Hasta luego!"
 ```
 
-El historial de la sesión se mantiene activo mientras el skill está abierto.
+Cada pregunta se envía a GPT de forma independiente (sin memoria entre preguntas
+dentro de la misma sesión).
+
+---
+
+## Seguridad (opcional pero recomendado)
+
+Cualquiera que descubra tu URL de Vercel puede enviarle solicitudes falsas y
+consumir tu crédito de OpenAI, ya que por defecto el endpoint no verifica quién
+lo llama. Para mitigar esto:
+
+1. En Alexa Developer Console, copia el **Skill ID** (botón "View Skill ID",
+   parece `amzn1.ask.skill.xxxxxxxx-xxxx-...`).
+2. En Vercel, agrega la variable de entorno:
+   ```
+   ALEXA_SKILL_ID = amzn1.ask.skill.tu-id-aqui
+   ```
+3. Con esa variable configurada, el servidor rechaza cualquier solicitud que no
+   declare ese mismo Skill ID.
+
+Esto **no** reemplaza la verificación completa de firma que usa el SDK oficial
+de Alexa (`ask-sdk`), pero bloquea el abuso más común (bots o curiosos que
+encuentran la URL). Si necesitas verificación de firma criptográfica completa,
+sería un cambio más grande, es un buen candidato para migrar a `ask-sdk-core`.
 
 ---
 
 ## Personalización
 
-En `app.py` puedes modificar:
+En `api/alexa.py` puedes modificar:
 
 - **`SYSTEM_PROMPT`** — cambia la personalidad o idioma de GPT
 - **`model="gpt-4o-mini"`** — cámbialo a `gpt-4o` para respuestas más potentes
@@ -126,6 +161,6 @@ En `app.py` puedes modificar:
 | Dices | Resultado |
 |-------|-----------|
 | *"Alexa, abre mi asistente"* | Inicia el skill |
-| *"[cualquier pregunta]"* | GPT responde |
+| *"pregunta [tu pregunta]"*, *"dime [tu pregunta]"*, etc. | GPT responde |
 | *"Alexa, ayuda"* | Instrucciones |
 | *"Alexa, para"* / *"Alexa, cancela"* | Cierra el skill |
